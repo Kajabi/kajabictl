@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Usage: kajabictl pg:psql [hostname]
+# Summary: Connects to Aurora PostgreSQL. If no hostname is provided, the writer will be used.
+# Provide KAJABICTL completions
+
+set -eo pipefail
+
+if [ "$1" = "--complete" ]; then
+  export output=json
+  exec kajabictl pg:info | jq '.[] | select(.Role == "Writer")'
+fi
+
+instances="$(output=json kajabictl pg:info)"
+while read instance; do
+  hostname="$(echo $instance | jq -r '.Hostname')"
+  auth_token="$(aws rds generate-db-auth-token --hostname $hostname --port 5432 --region us-east-1 --username kajabi_superuser)"
+
+  kajabictl-pg:tunnel $hostname
+  PGPASSWORD="$auth_token" psql -f $_KAJABICTL_ROOT/share/kajabictl/pgsql/long_running_queries.sql \
+    -h "/tmp/$hostname" \
+    -U kajabi_superuser \
+    kajabi_products
+done < <(echo $instances | jq --compact-output '.[]')

@@ -15,6 +15,14 @@ alias kj="kajabictl"
 
 ## Installation
 
+### Dependencies
+
+```
+brew bundle --no-lock
+```
+
+### Install
+
 Here's one way you could install `kajabictl` in your `$HOME` directory:
 
     cd

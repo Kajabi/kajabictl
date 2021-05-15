@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+instances="$(output=json kajabictl pg:info)"
+while read instance; do
+  hostname="$(echo $instance | jq -r '.Hostname')"
+  auth_token="$(aws rds generate-db-auth-token --hostname $hostname --port 5432 --region us-east-1 --username kajabi_superuser)"
+
+  kajabictl-pg:tunnel $hostname
+  PGPASSWORD="$auth_token" psql -f $_KAJABICTL_ROOT/share/kajabictl/pgsql/long_running_queries.sql \
+    -h "/tmp/$hostname" \
+    -U kajabi_superuser \
+    kajabi_products
+done < <(echo $instances | jq --compact-output '.[]')

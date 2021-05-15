@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+. $_KAJABICTL_ROOT/share/kajabictl/includes/kajabi-env.sh
+
+# TODO: this assumes the user has set up profiles correctly. Is there a good
+# way to detect they are connected to the correct AWS account without
+# hard-coding the account IDs in the source (which seems insecure)?
+. awsume $KAJABICTL_ENV
+
+writer="$(aws --output json rds describe-db-clusters --db-cluster-identifier kajabi-products-aurora-$short_env | jq -r '.DBClusters[0].DBClusterMembers[] | select(.IsClusterWriter == true) | .DBInstanceIdentifier')"
+
+instances=$(aws --output json rds describe-db-instances --filters Name=db-cluster-id,Values=kajabi-products-aurora-$short_env | jq --raw-output --arg writer $writer '.DBInstances |
+ map({
+   DBInstanceClass,
+   DBInstanceIdentifier,
+   DBInstanceStatus,
+   DBName,
+   Hostname: .Endpoint.Address,
+   PGVersion: .EngineVersion,
+   Port: .Endpoint.Port,
+   PreferredMaintenanceWindow,
+   Role: (if .DBInstanceIdentifier == $writer then "Writer" else "Reader" end),
+ })')
+
+if [[ $output == "json" ]]; then
+  echo $instances
+else
+  while read instance; do
+    echo "=== $(echo $instance | jq -r '.DBInstanceIdentifier')"
+    echo "Role: $(echo $instance | jq -r '.Role')"
+    echo "Status: $(echo $instance | jq -r '.DBInstanceStatus')"
+    echo "PostgreSQL version: $(echo $instance | jq -r '.PGVersion')"
+    echo "Instance class: $(echo $instance | jq -r '.DBInstanceClass')"
+    echo "Hostname: $(echo $instance | jq -r '.Hostname')"
+    echo "Port: $(echo $instance | jq -r '.Port')"
+    echo "Database name: $(echo $instance | jq -r '.DBName')"
+    echo "Maintenance window: $(echo $instance | jq -r '.PreferredMaintenanceWindow')"
+    echo
+  done < <(echo $instances | jq --compact-output '.[]')
+fi

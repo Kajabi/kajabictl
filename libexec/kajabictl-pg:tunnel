@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+if [ -z "$KAJABICTL_ENV" ]; then
+  echo "KAJABICTL_ENV required"
+  exit 1
+fi
+
+"$_KAJABICTL_ROOT/bin/plumbing-check-sft"
+
+# -f: Requests ssh to go to background just before command execution
+# -L local_socket:host:host_port: Forward connections to the local Unix socket to the remote host and port
+# -M: places the ssh client into `master` mode for connection sharing
+# -N: do not execute remote command
+# -O ctl_cmd: Control an active connection multiplexing master process.
+# -o option: Can be used to give options in the format used in the configuration file.
+# -S: ctl_path: Specifies the location of a control socket for connection sharing
+# -T: Disable pseudo-terminal allocation.
+
+ctl_path="/tmp/kajabictl-$KAJABICTL_ENV-ssh-%r@%h:%p"
+bastion="$(sft list-servers -p $KAJABICTL_ENV | tail -n +2 | awk '{ print $1 }' | grep bastion-host | sort | tail -n 1)"
+database="$1"
+# TODO: check $database
+
+if ! ssh -G "$bastion" | grep -i '^StreamLocalBindUnlink yes' >/dev/null 2>&1; then
+  echo "WARN: StreamLocalBindUnlink is false or unset. Socket files will not be cleaned up" >&2
+fi
+
+if ! ssh -S "$ctl_path" -O 'check' $bastion >/dev/null 2>&1; then
+  ssh -f -M -N -S "$ctl_path" -T \
+    -o 'ControlPersist 10m' \
+    -o 'ProxyCommand "/usr/local/bin/sft" proxycommand %h' \
+    -o 'UserKnownHostsFile "~/Library/Application Support/ScaleFT/proxycommand_known_hosts"' \
+    $bastion
+fi
+
+mkdir -p "/tmp/$database"
+if ! [ -f "/tmp/$database/.s.PGSQL.5432" ]; then
+  ssh -L "/tmp/$database/.s.PGSQL.5432:$database:5432" \
+    -S "$ctl_path" \
+    -O 'forward' \
+    -o 'ProxyCommand /usr/local/bin/sft proxycommand %h' \
+    -o 'UserKnownHostsFile "~/Library/Application Support/ScaleFT/proxycommand_known_hosts"' \
+    $bastion
+fi
